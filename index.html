@@ -126,8 +126,8 @@ const DEF=[
 const getCats=()=>['Все',...new Set(P.map(x=>x.c))];
 let S={cart:{},fav:[],user:null,orders:[]};
 try{Object.assign(S,JSON.parse(localStorage.getItem('shop')||'{}'))}catch(e){}
-let P=(S.v===2&&S.products)||(S.orders=[],S.cart={},DEF.map((x,i)=>({...x,s:[8,5,4,12,7,3,20,2,9,15,0,30][i],p:[649,925,299,375,249,499,99,325,175,59,45,19][i]})));
-const save=()=>{try{S.v=2;S.products=P;localStorage.setItem('shop',JSON.stringify(S))}catch(e){toast('Не удалось сохранить: мало места')}};
+let P=(S.v===3&&S.products)||(S.orders=[],S.cart={},[]);
+const save=()=>{try{S.v=3;S.products=P;localStorage.setItem('shop',JSON.stringify(S))}catch(e){toast('Не удалось сохранить: мало места')}};
 const tg=window.Telegram&&Telegram.WebApp;
 if(tg){try{tg.ready();tg.expand();tg.setHeaderColor('#000000');tg.setBackgroundColor('#000000')}catch(e){}}
 const hap=t=>{try{tg&&tg.HapticFeedback.impactOccurred(t||'light')}catch(e){}};
@@ -142,7 +142,7 @@ function closeSheet(){$('#sheet').classList.remove('on');$('#ov').classList.remo
 $('#ov').onclick=closeSheet;
 
 function go(t){tab=t;$$('.view').forEach(v=>v.classList.toggle('on',v.id==='v-'+t));$$('.tab').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
-  if(t==='cart')renderCart();if(t==='profile')renderProfile();if(t==='admin')renderAdmin();if(t==='catalog'){renderChips();renderGrid()}scrollTo({top:0});hap()}
+  if(t==='cart')renderCart();if(t==='profile')renderProfile();if(t==='admin')renderAdmin();if(t==='catalog'){renderChips();renderGrid();loadCatalog()}scrollTo({top:0});hap()}
 $$('.tab').forEach(b=>b.onclick=()=>go(b.dataset.t));
 
 function count(){return Object.values(S.cart).reduce((a,b)=>a+b,0)}
@@ -280,6 +280,85 @@ function adShop(){const c=CF(),f=(k,p,t)=>`<label class="field"><input id="c_${k
  $('#cs').onclick=()=>{const v=k=>$('#c_'+k).value.trim();S.cfg={name:v('name')||'Магазин',cur:v('cur')||'lei',fee:Math.max(0,+v('fee')||0),free:Math.max(0,+v('free')||0),ann:v('ann')};save();applyCfg();hap('medium');toast('Сохранено ✓')}}
 applyCfg();$('#adm').style.display=(!ADMIN_ID||tuid()===ADMIN_ID)?'':'none';
 renderChips();renderGrid();badge();
+
+/* ===== Подключение к серверу (Cloudflare Worker) ===== */
+const API='https://shop-api.tmisa2223.workers.dev';
+const h=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const post=async(a,o={})=>{let j={};try{const r=await fetch(API,{method:'POST',headers:{'content-type':'text/plain'},body:JSON.stringify({a,initData:(tg&&tg.initData)||'',...o})});try{j=await r.json()}catch(e){}j._s=r.status}catch(e){j={error:'net',_s:0}}return j};
+async function loadCatalog(){const j=await post('catalog');if(!j.products)return;
+ P.length=0;j.products.forEach(x=>P.push({id:x.id,n:x.name,c:x.category,p:x.price,s:x.stock,e:x.emoji||'📦',d:x.description||'',g:GR[x.id%GR.length],img:x.iv?API+'/img/'+x.id+'?v='+x.iv:''}));
+ S.cfg=j.cfg;save();applyCfg();renderChips();renderGrid();badge();if(tab==='cart')renderCart();if(tab==='admin'&&adt==='p')renderAdmin()}
+async function loadMe(){if(!(tg&&tg.initData))return;const j=await post('me');if(!j.orders)return;
+ S.orders=j.orders.map(o=>({n:o.id,t:o.total,d:new Date(o.created).toLocaleDateString('ru-RU'),st:o.status}));save();if(tab==='profile')renderProfile()}
+
+function checkout(sub){let dl=1;const c=CF();
+ openSheet(`<h2>Оформление</h2><p>Проверьте данные заказа.</p><div class="seg"><button class="on" data-d="1">Доставка</button><button data-d="0">Самовывоз</button></div>
+ <label class="field" id="adw"><input id="ad" placeholder="Адрес доставки" value="${h(S.user.addr)}"></label>
+ <div class="kv"><span>Товары</span>${rub(sub)}</div><div class="kv"><span>Доставка</span><b id="cf"></b></div>
+ <div class="sum" style="padding-top:12px"><span>К оплате</span><span id="ct"></span></div><button class="btn" id="cc">Подтвердить заказ</button>`);
+ const up=()=>{const f=dl&&sub<c.free?c.fee:0;$('#cf').textContent=f?rub(f):'Бесплатно';$('#ct').textContent=rub(sub+f);$('#adw').style.display=dl?'':'none'};up();
+ $$('#sheet .seg button').forEach(b=>b.onclick=()=>{dl=+b.dataset.d;$$('#sheet .seg button').forEach(x=>x.classList.toggle('on',x===b));up();hap()});
+ $('#cc').onclick=async e=>{const a=$('#ad').value.trim();if(dl&&a.length<5){$('#ad').classList.add('err');hap('heavy');return}
+  const b=e.currentTarget;b.disabled=true;b.style.opacity=.5;
+  const j=await post('order',{items:Object.entries(S.cart).map(([id,qty])=>({id:+id,qty})),name:S.user.name,phone:S.user.phone,email:S.user.email,delivery:!!dl,address:a});
+  b.disabled=false;b.style.opacity=1;
+  if(j.ok){if(dl)S.user.addr=a;S.cart={};save();badge();closeSheet();hap('heavy');renderCart();toast('Заказ №'+j.id+' оформлен ✓');loadCatalog();loadMe();return}
+  hap('heavy');toast(j.error==='stock'?'Не хватает: '+j.name+' (осталось '+j.stock+')':j.error==='auth'?'Откройте магазин через Telegram':j.error==='gone'?'Товар больше недоступен':'Не удалось оформить заказ');
+  if(j.error==='stock'||j.error==='gone')loadCatalog()}}
+
+function renderAdmin(){$('#v-admin').innerHTML=`<h1>Управление</h1><div class="seg">${[['p','Товары'],['o','Заказы'],['s','Магазин']].map(([k,n])=>`<button data-at="${k}" class="${adt===k?'on':''}">${n}</button>`).join('')}</div><div id="ab"></div>`;
+ $$('[data-at]').forEach(b=>b.onclick=()=>{adt=b.dataset.at;hap();renderAdmin()});
+ if(adt==='p')adProducts();else if(adt==='o')adOrders();else adShop()}
+
+function adProducts(){const ca='<button class="btn red" id="ca" style="margin-top:14px">Удалить все товары</button>';
+ $('#ab').innerHTML=`<button class="btn" id="an" style="margin-bottom:14px">+ Новый товар</button><div class="h2">Товаров: ${P.length} · нет в наличии: ${P.filter(x=>x.s<1).length}</div>${P.length?`<div class="list">${P.map(x=>`<div class="item"><div class="thumb" style="${grad(x.g)}" data-e="${x.id}">${ic(x)}</div><div class="t" data-e="${x.id}"><b>${h(x.n)}</b><small class="${x.s<1?'no':''}">${rub(x.p)} · ${x.s<1?'нет в наличии':x.s+' шт.'}</small></div><div class="step"><button data-sm="${x.id}">−</button><span>${x.s}</span><button data-sp="${x.id}">+</button></div></div>`).join('')}</div>${ca}`:'<div class="empty"><i>🛍️</i>Товаров пока нет.<br>Нажмите «+ Новый товар».</div>'}`;
+ $('#an').onclick=()=>editSheet();
+ $$('#v-admin [data-e]').forEach(b=>b.onclick=()=>editSheet(+b.dataset.e));
+ const stk=async(id,d)=>{const x=P.find(p=>p.id===id);x.s=Math.max(0,x.s+d);adProducts();const j=await post('a_stock',{id,stock:x.s});if(j.error)toast('Не удалось сохранить');loadCatalog()};
+ $$('#v-admin [data-sm]').forEach(b=>b.onclick=()=>stk(+b.dataset.sm,-1));
+ $$('#v-admin [data-sp]').forEach(b=>b.onclick=()=>stk(+b.dataset.sp,1));
+ const c=$('#ca');if(c)c.onclick=async e=>{const b=e.currentTarget;if(!b.dataset.c){b.dataset.c=1;b.textContent='Нажмите ещё раз: удалятся все товары';hap();return}
+  await post('a_clear');S.cart={};save();hap('heavy');toast('Каталог очищен');loadCatalog()}}
+
+async function adOrders(){$('#ab').innerHTML='<div class="empty">Загрузка…</div>';
+ const j=await post('a_orders');
+ if(!j.orders){$('#ab').innerHTML='<div class="empty">Не удалось загрузить заказы.<br>Откройте магазин через Telegram.</div>';return}
+ const st=['Новый','В работе','Выполнен','Отменён'];
+ $('#ab').innerHTML=j.orders.length?`<div class="list">${j.orders.map((o,i)=>{let it=[];try{it=JSON.parse(o.items)}catch(e){}
+  return `<div class="item"><div class="t"><b>Заказ №${o.id} · ${rub(o.total)}</b><small style="display:block">${new Date(o.created).toLocaleDateString('ru-RU')} · ${h(o.name)}, ${h(o.phone)}<br>${h(o.address)}<br>${it.map(l=>h(l.name)+' ×'+l.qty).join(', ')}</small></div><button class="btn ghost" data-os="${i}" style="width:auto;padding:8px 14px">${h(o.status)}</button></div>`}).join('')}</div>`:'<div class="empty"><i>📦</i>Заказов пока нет.</div>';
+ $$('[data-os]').forEach(b=>b.onclick=async()=>{const o=j.orders[+b.dataset.os];o.status=st[(st.indexOf(o.status)+1)%st.length];b.textContent=o.status;hap();
+  const r=await post('a_status',{id:o.id,status:o.status});if(r.error)toast('Не удалось сохранить')})}
+
+function adShop(){const c=CF(),f=(k,p,t)=>`<label class="field"><input id="c_${k}" ${t?'type="number" inputmode="decimal" ':''}placeholder="${p}" value="${h(c[k])}"></label>`;
+ $('#ab').innerHTML=`<div class="h2">Название магазина</div>${f('name','Название')}<div class="h2">Валюта</div>${f('cur','lei')}<div class="h2">Доставка: цена и «бесплатно от»</div><div class="two">${f('fee','Цена',1)}${f('free','Бесплатно от',1)}</div><div class="h2">Объявление на главной (необязательно)</div>${f('ann','Например: Новая коллекция')}<button class="btn" id="cs">Сохранить</button>`;
+ $('#cs').onclick=async()=>{const v=k=>$('#c_'+k).value.trim();
+  const cfg={name:v('name')||'Магазин',cur:v('cur')||'lei',fee:Math.max(0,+v('fee')||0),free:Math.max(0,+v('free')||0),ann:v('ann')};
+  const j=await post('a_cfg',{cfg});if(!j.ok){toast('Не удалось сохранить');return}hap('medium');toast('Сохранено ✓');loadCatalog()}}
+
+function editSheet(id){const x=id?P.find(p=>p.id===id):{n:'',c:'',p:'',s:10,e:'📦',d:'',g:GR[P.length%GR.length],img:''};
+ let img=x.img||'',ch=false;
+ openSheet(`<h2>${id?'Редактировать':'Новый товар'}</h2><p>Остаток 0 — товара нет в наличии.</p>
+ <label class="field"><input id="en" placeholder="Название" value="${h(x.n)}"></label>
+ <label class="field"><input id="ec" list="cl" placeholder="Категория" value="${h(x.c)}"><datalist id="cl">${getCats().slice(1).map(c=>`<option value="${h(c)}">`).join('')}</datalist></label>
+ <div class="two"><label class="field"><input id="ep" type="number" inputmode="decimal" placeholder="Цена, ${h(CF().cur)}" value="${x.p}"></label><label class="field"><input id="es" type="number" inputmode="numeric" placeholder="Остаток, шт." value="${x.s}"></label></div>
+ <div class="photo"><div class="thumb" id="pv" style="${grad(x.g)}">${ic(x)}</div><button class="btn ghost" id="pbt">Фото</button><button class="btn red" id="prm">Убрать</button><input type="file" id="pf" accept="image/*" hidden></div>
+ <label class="field"><input id="ee" placeholder="Эмодзи (если без фото)" value="${h(x.e)}"></label>
+ <label class="field"><input id="ed2" placeholder="Описание" value="${h(x.d)}"></label>
+ <button class="btn" id="ek">Сохранить</button>${id?'<button class="btn red" id="ex" style="margin-top:10px">Удалить товар</button>':''}`);
+ const pv=()=>{$('#pv').innerHTML=ic({img,e:$('#ee').value||'📦'})};
+ $('#pbt').onclick=()=>$('#pf').click();$('#prm').onclick=()=>{img='';ch=true;pv();hap()};$('#ee').oninput=pv;
+ $('#pf').onchange=async e=>{const f=e.target.files[0];if(!f)return;const n=await shrink(f);if(n){img=n;ch=true;pv();hap()}};
+ $('#ek').onclick=async e=>{const v=k=>$('#'+k).value.trim();const chk=[['en',v('en').length>1],['ec',v('ec').length>1],['ep',+v('ep')>0]];
+  chk.forEach(([k,ok])=>$('#'+k).classList.toggle('err',!ok));if(chk.some(c=>!c[1])){hap('heavy');return}
+  const b=e.currentTarget;b.disabled=true;b.textContent='Сохраняем…';
+  const p={id:id||0,name:v('en'),category:v('ec'),price:+v('ep'),stock:Math.max(0,Math.floor(+v('es')||0)),emoji:v('ee')||'📦',description:v('ed2')};if(ch)p.img=img;
+  const j=await post('a_save',{p});b.disabled=false;b.textContent='Сохранить';
+  if(!j.ok){hap('heavy');toast(j._s===401||j._s===403?'Откройте магазин через Telegram':'Не удалось сохранить');return}
+  closeSheet();hap('medium');toast('Сохранено ✓');loadCatalog()};
+ if(id)$('#ex').onclick=async e=>{const b=e.currentTarget;if(!b.dataset.c){b.dataset.c=1;b.textContent='Нажмите ещё раз, чтобы удалить';hap();return}
+  await post('a_delete',{id});delete S.cart[id];S.fav=S.fav.filter(f=>f!==id);save();closeSheet();hap('heavy');toast('Товар удалён');loadCatalog()}}
+
+loadCatalog();loadMe();
 </script>
 </body>
 </html>
